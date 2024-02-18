@@ -1,0 +1,156 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+
+  - name: Update repository index
+    apt:
+      update_cache: yes
+
+  - name: Update programs
+    apt:
+      upgrade: safe
+      state: latest
+
+  - name: Install net-tools package
+    apt:
+      name: net-tools
+      state: latest
+
+  - name: Add multiverse repository
+    shell: sudo add-apt-repository multiverse
+
+#  - name: Add repository non-free
+#    shell: sudo apt-add-repository non-free -y
+
+  - name: Add architecture i386
+    shell: sudo dpkg --add-architecture i386
+
+  - name: Install software-properties-common
+    apt:
+      name: software-properties-common
+      force_apt_get: yes
+      state: latest
+ 
+  - name: Add the user pzuser
+    ansible.builtin.user:
+      name: pzuser
+      password: $6$mysecretsalt$UxXf96m7qWf4gFJuQUWygLlhUrikalIr1qiN7P0Vz3ILP2s1EdopPgostsusBpNxETNkjpIYpr4lfwih0HmvD.
+
+  - name: Delete steamcmd directory if exists
+    file:
+      state: absent
+      path: /home/pzuser/Steam
+
+  - name: Crear carpeta steamcmd
+    file:
+      path: /home/pzuser/steamcmd
+      owner: pzuser
+      group: pzuser
+      state: directory
+ 
+  - name: Install steamcmd dependencies
+    apt:
+      name: lib32gcc-s1
+      force_apt_get: yes
+      state: latest
+ 
+  - name: Download steamcmd
+    get_url:
+      url: https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+      dest: /home/pzuser/steamcmd/steamcmd_linux.tar.gz
+      #owner: pzuser
+      #group: pzuser
+      #mode: '0655'
+      force: yes
+
+  - name: Extraer los contennidos de steamcmd
+    unarchive:
+      src: /home/pzuser/steamcmd/steamcmd_linux.tar.gz
+      dest: /home/pzuser/steamcmd/
+      remote_src: yes
+
+  - name: Cambiar permisos steamcmd
+    file:
+      path: /home/pzuser/steamcmd
+      state: directory
+      recurse: yes
+      owner: pzuser
+      group: pzuser
+      mode: '0755'
+
+  - name: Crear carpeta servidor
+    file:
+      path: /opt/pzserver
+      owner: pzuser
+      group: pzuser
+      state: directory
+    
+  - name: Asignar permisos a la carpeta del servidor
+    file:
+      path: /opt/pzserver
+      state: directory
+      recurse: yes
+      owner: pzuser
+      group: pzuser
+    
+  - name: Copy file with owner and permissions
+    ansible.builtin.copy:
+      src: update_zomboid.txt
+      dest: /home/pzuser/update_zomboid.txt
+      owner: pzuser
+      group: pzuser
+      mode: '0755'
+
+  - name: Run script
+    shell:
+      cmd: ./steamcmd.sh +runscript /home/pzuser/update_zomboid.txt
+      chdir: /home/pzuser/steamcmd/
+
+  - name: Allow ssh connection
+    ufw:
+      rule: allow
+      port: 22
+      proto: any
+      
+  - name: Allow port 16261 udp
+    ufw:
+      rule: allow
+      port: 16261
+      proto: udp
+    
+  - name: Allow port 16262 udp
+    ufw:
+      rule: allow
+      port: 16262
+      proto: udp
+
+  - name: Allow port 16262 udp
+    ufw:
+      rule: allow
+      port: 16262
+      proto: udp
+ 
+  - name: Allow port 8766 udp
+    ufw:
+      rule: allow
+      port: 8766
+      proto: udp
+
+  - name: Allow port 8767 udp
+    ufw:
+      rule: allow
+      port: 8767
+      proto: udp
+    
+  - name: Enable firewall
+    ufw:
+      state: enabled
+    
+  - name: Reboot firewall
+    ufw:
+      state: reloaded
+
+
+    

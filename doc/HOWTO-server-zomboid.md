@@ -131,4 +131,13 @@ nano servertest.ini
 ```
 
 # Instalación de mods
+Para instalar mods en el servidor necesitamos los ID de los mods que queremos instalar en el servidor, una forma sencilla de obtener estos ID sin copiarlos uno por uno de la lista de mods (el ID del mod forma parte de la ruta en la que se encuentra el mod en la Workshop), podemos hacer lo siguiente:
+1. Vamos a la Workshop de Steam y nos suscribimos a los mods que queramos que estén en el servidor.
+2. Creamos una colección en Explorar-Artículos suscritos-Guardar en la colección.
+3. Una vez puesto un nombre y creada la colección la hacemos pública, luego podemos cambiar esto, pero necesitamos que sea pública para el siguiente paso.
+4. Vamos a la web https://getcollectionids.moonguy.me/ y pegamos en enlace de nuestra colección
+5. Copiamos la lista de IDS separados por punto y coma, y la guardamos.
+6. Ya podemos poner el repositorio en privado, o si va a ser un servidor para jugar con amigos, puede ser útil dejar la visibilidad en sólo amigos, permitiendo así que puedan tener los mismos mods que el servidor de forma sencilla.
+
+Ahora que ya tenemos la lista de mods tendríamos que ir al fichero indicado de configuraciones opcionales y en la línea "WorkshopItems=" añadimos los ID copiados anteriormente.
 

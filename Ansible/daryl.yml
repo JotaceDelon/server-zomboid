@@ -24,6 +24,13 @@
     tags:
       - packages
 
+  - name: Install tmux package
+    apt:
+      name: tmux
+      state: latest
+    tags:
+      - packages
+
   - name: Add multiverse repository
     shell: sudo add-apt-repository multiverse
     tags:

@@ -1,0 +1,22 @@
+[Unit]
+Description=Project Zomboid ({{ pz.server_name }})
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User={{ pz.user }}
+Group={{ pz.user }}
+Environment=HOME={{ pz.home }}
+WorkingDirectory={{ pz.install_dir }}
+ExecStart=/usr/bin/python3 {{ pz.home }}/.config/zomboid/run-server.py {{ pz.home }}/.config/zomboid/startup.json
+KillMode=mixed
+TimeoutStopSec={{ pz.shutdown_timeout }}
+Restart=on-failure
+RestartSec=10
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

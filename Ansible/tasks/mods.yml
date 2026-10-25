@@ -1,0 +1,82 @@
+---
+# Kept separate so configuration can be tested without touching a game server.
+- name: Validate mods section
+  ansible.builtin.assert:
+    that:
+      - mods | default({}) is mapping
+    fail_msg: mods must be a YAML mapping. See doc/MODS.md.
+
+- name: Resolve optional mod configuration and clear previous preparation
+  ansible.builtin.set_fact:
+    mods_options: "{{ {'enabled': false, 'workshop_file': none, 'workshop_items': [], 'mod_ids': [], 'map_folders': []} | combine(mods | default({})) }}"
+    mods_workshop_ids: []
+
+- name: Validate mod configuration types
+  ansible.builtin.assert:
+    that:
+      - mods_options.enabled is boolean
+      - mods_options.workshop_file == none or mods_options.workshop_file is string
+      - mods_options.workshop_items is sequence and mods_options.workshop_items is not string and mods_options.workshop_items is not mapping
+      - mods_options.mod_ids is sequence and mods_options.mod_ids is not string and mods_options.mod_ids is not mapping
+      - mods_options.map_folders is sequence and mods_options.map_folders is not string and mods_options.map_folders is not mapping
+    fail_msg: Use enabled true/false and YAML lists for workshop_items, mod_ids and map_folders. See doc/MODS.md.
+
+- name: Validate project-relative Workshop file path
+  ansible.builtin.assert:
+    that:
+      - mods_options.workshop_file is match('^[A-Za-z0-9_][A-Za-z0-9_./-]*$')
+      - "'..' not in mods_options.workshop_file.split('/')"
+    fail_msg: workshop_file must be a relative path inside the project, such as Ansible/files/workshopitems.txt.
+  when: mods_options.enabled and mods_options.workshop_file is not none
+
+- name: Read the semicolon-separated Workshop list when selected
+  ansible.builtin.set_fact:
+    mods_workshop_ids: "{{ lookup('ansible.builtin.file', project_root + '/' + mods_options.workshop_file).split(';') | map('trim') | reject('equalto', '') | list }}"
+  when: mods_options.enabled and mods_options.workshop_file is not none
+
+- name: Combine file and YAML Workshop IDs preserving order
+  ansible.builtin.set_fact:
+    mods_workshop_ids: "{{ (mods_workshop_ids + (mods_options.workshop_items | map('string') | list)) | unique(case_sensitive=true) | list }}"
+  when: mods_options.enabled
+
+- name: Validate numeric Workshop item IDs
+  ansible.builtin.assert:
+    that:
+      - item is match('^[1-9][0-9]*$')
+    fail_msg: Workshop IDs must contain only digits, separated by semicolons in the file or listed individually in YAML.
+  loop: "{{ mods_workshop_ids }}"
+  when: mods_options.enabled
+
+- name: Validate internal Mod IDs and map folder names
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item | trim | length > 0
+      - item == item | trim
+      - "';' not in item"
+      - "'\n' not in item"
+      - "'\r' not in item"
+    fail_msg: Each Mod ID or map folder must be a nonempty string without semicolons, line breaks or surrounding whitespace.
+  loop: "{{ mods_options.mod_ids + mods_options.map_folders }}"
+  when: mods_options.enabled
+
+- name: Require both download and activation lists when mods are enabled
+  ansible.builtin.assert:
+    that:
+      - mods_workshop_ids | length > 0
+      - mods_options.mod_ids | length > 0
+    fail_msg: Enabling mods requires numeric Workshop IDs AND internal mod_ids. The old numeric list alone does not enable the modules. See doc/MODS.md.
+  when: mods_options.enabled
+
+- name: Build managed INI settings
+  ansible.builtin.set_fact:
+    managed_settings: >-
+      {{ pz.settings | combine({
+        'PublicName': pz.public_name,
+        'WorkshopItems': (mods_workshop_ids | join(';')) if mods_options.enabled else '',
+        'Mods': (mods_options.mod_ids | unique(case_sensitive=true) | join(';')) if mods_options.enabled else '',
+        'Map': (((mods_options.map_folders if mods_options.enabled else []) +
+                 (pz.settings.Map | default('Muldraugh, KY')).split(';')) |
+                unique(case_sensitive=true) | join(';'))
+      }) }}
+  no_log: true

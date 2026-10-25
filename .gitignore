@@ -1,1 +1,17 @@
-/Vagrant/.vagrant
+# Estado y claves locales de Vagrant (en cualquier carpeta).
+.vagrant/
+# Configuración personal: contiene credenciales.
+/config.yml
+/config.*.local.yml
+/Ansible/files/*.local.txt
+.env
+.env.*
+!.env.example
+# Partidas, copias y registros locales.
+/backups/
+/Zomboid/
+*.log
+# Dependencias temporales utilizadas durante la validación.
+/.validation-deps/
+__pycache__/
+*.pyc

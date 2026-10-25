@@ -1,0 +1,120 @@
+---
+# Configuration-only integration tests: no packages, files or services modified.
+- name: Test optional mods without changing the server
+  hosts: all
+  gather_facts: false
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+    pz:
+      public_name: Test server
+      settings:
+        Password: ''
+        MaxPlayers: 8
+  tasks:
+    - name: Prepare configuration without the optional mods section
+      ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+    - name: Verify backward-compatible vanilla defaults
+      ansible.builtin.assert:
+        that:
+          - managed_settings.WorkshopItems == ''
+          - managed_settings.Mods == ''
+          - managed_settings.Map == 'Muldraugh, KY'
+          - managed_settings.MaxPlayers == 8
+
+    - name: Prepare YAML mods including case-sensitive IDs and maps
+      ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+      vars:
+        mods:
+          enabled: true
+          workshop_items: ['123', 456, '123']
+          mod_ids: ['Library', 'library', '\Example42', 'Library']
+          map_folders: ['TestMap', 'Muldraugh, KY']
+    - name: Verify deduplication, exact Mod IDs and map order
+      ansible.builtin.assert:
+        that:
+          - managed_settings.WorkshopItems == '123;456'
+          - managed_settings.Mods == 'Library;library;\Example42'
+          - managed_settings.Map == 'TestMap;Muldraugh, KY'
+
+    - name: Prepare Workshop file with extra YAML items
+      ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+      vars:
+        mods:
+          enabled: true
+          workshop_file: Ansible/files/workshopitems.txt
+          workshop_items: ['123']
+          mod_ids: ['ExampleInternalId']
+    - name: Verify semicolon list is combined with YAML items
+      ansible.builtin.assert:
+        that:
+          - managed_settings.WorkshopItems == (lookup('ansible.builtin.file', project_root + '/Ansible/files/workshopitems.txt') | trim) + ';123'
+
+    - name: Disable mods without reading a nonexistent file
+      ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+      vars:
+        mods:
+          enabled: false
+          workshop_file: does-not-exist.txt
+          mod_ids: ['PreviouslyEnabled']
+          map_folders: ['OldMap']
+    - name: Verify disabled configuration clears modules and custom maps
+      ansible.builtin.assert:
+        that:
+          - managed_settings.WorkshopItems == ''
+          - managed_settings.Mods == ''
+          - managed_settings.Map == 'Muldraugh, KY'
+
+    - name: Reject Workshop URLs instead of numeric IDs
+      block:
+        - ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+          vars:
+            mods:
+              enabled: true
+              workshop_items: ['https://invalid.example/?id=123']
+              mod_ids: ['Example']
+        - ansible.builtin.fail:
+            msg: Invalid Workshop ID was accepted
+      rescue:
+        - ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Validate numeric Workshop item IDs'
+
+    - name: Reject numeric-only installation without internal module IDs
+      block:
+        - ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+          vars:
+            mods:
+              enabled: true
+              workshop_items: ['123']
+        - ansible.builtin.fail:
+            msg: Missing Mod IDs were accepted
+      rescue:
+        - ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Require both download and activation lists when mods are enabled'
+
+    - name: Reject file paths outside the project
+      block:
+        - ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+          vars:
+            mods:
+              enabled: true
+              workshop_file: ../outside.txt
+              mod_ids: ['Example']
+        - ansible.builtin.fail:
+            msg: Escaping Workshop file path was accepted
+      rescue:
+        - ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Validate project-relative Workshop file path'
+
+    - name: Reject multiple internal IDs in a single list item
+      block:
+        - ansible.builtin.include_tasks: ../Ansible/tasks/mods.yml
+          vars:
+            mods:
+              enabled: true
+              workshop_items: ['123']
+              mod_ids: ['One;Two']
+        - ansible.builtin.fail:
+            msg: Embedded delimiter was accepted
+      rescue:
+        - ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Validate internal Mod IDs and map folder names'

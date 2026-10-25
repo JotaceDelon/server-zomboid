@@ -1,0 +1,78 @@
+# PLANTILLA PUBLICA: no guardar contraseñas reales en este archivo.
+# Copiar a config.yml (ignorado por Git), conservar las claves e indentación.
+# Guardar como UTF-8. Inicio y uso diario en README.md.
+# Referencia completa de opciones en doc/GUIA-AVANZADA.md.
+vm:
+  box: bento/ubuntu-24.04
+  box_version: "202510.26.0"
+  name: daryl
+  hostname: daryl
+  memory_mb: 8192
+  cpus: 2
+  # public: puente a la red del router. Para Internet, redirigir los puertos
+  # del juego hacia la IP de esta VM (ver README).
+  # private: solo anfitrión; necesita una IP, por ejemplo 192.168.56.10.
+  network: public
+  # null = el router asigna una IP por DHCP (solo en modo public).
+  ip: null
+  # null = Vagrant selecciona/pregunta la interfaz física del anfitrión.
+  bridge: null
+
+pz:
+  user: pzuser
+  home: /home/pzuser
+  install_dir: /opt/pzserver
+  steamcmd_dir: /opt/steamcmd
+  steamcmd_url: https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+  # null usa la rama predeterminada de Steam; legacy41 para Build 41.
+  branch: null
+  # Solo true para actualizar explícitamente, con copia previa del mundo.
+  update: false
+  validate: true
+  # Identificador de archivos/mundo. Cambiarlo selecciona otro mundo.
+  server_name: daryl
+  public_name: Daryl - Project Zomboid
+  # Contraseña del USUARIO admin del juego, mínimo 12 caracteres.
+  # Cambiarla en config.yml y aplicar con vagrant provision.
+  admin_password: "CAMBIAME"
+  # Memoria Java en MB; dejar al menos 2048 MB para el resto de Ubuntu.
+  heap_initial_mb: 1024
+  heap_max_mb: 5120
+  service_name: zomboid
+  enabled: true  # Arrancar el servicio al encender Ubuntu.
+  # Tiempos en segundos; el juego puede tardar varios minutos en cargar.
+  startup_timeout: 600
+  shutdown_timeout: 180
+  # Claves omitidas conservan el valor generado por el juego.
+  # PublicName se obtiene de public_name; Mods y WorkshopItems, de la sección mods.
+  settings:
+    Public: false
+    # Contraseña de ENTRADA al servidor. Vacía = dejar la casilla vacía.
+    # No es la contraseña admin ni la contraseña de cada jugador.
+    Password: ""
+    MaxPlayers: 16
+    PVP: false
+    PauseEmpty: true
+    DefaultPort: 16261
+    UDPPort: 16262
+    UPnP: false
+
+# Opcional. Si falta esta sección, se mantiene un servidor sin mods.
+# Guía: doc/MODS.md.
+mods:
+  enabled: false
+  # Ruta relativa a la raíz; null para usar solo workshop_items.
+  # Archivo de ejemplo: Ansible/files/workshopitems.txt (Better Sorting).
+  workshop_file: null
+  # IDs numéricos de los paquetes Steam Workshop (como cadenas).
+  workshop_items: []
+  # Identificadores internos de los módulos, en su orden de carga.
+  mod_ids: []
+  # Carpetas de mapas adicionales; se anteponen al mapa base de pz.settings.Map.
+  map_folders: []
+
+firewall:
+  enabled: true
+  ssh_port: 22
+  # Los puertos principales se obtienen de pz.settings.
+  extra_udp_ports: []

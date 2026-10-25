@@ -1,0 +1,255 @@
+---
+- name: Deploy a configurable Project Zomboid server
+  hosts: all
+  become: true
+  vars_files:
+    - ../config.yml
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+  tasks:
+    - name: Validate supported platform and configuration
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version is version('24.04', '>=')
+          - ansible_architecture == 'x86_64'
+          - pz.user is match('^[a-z_][a-z0-9_-]*$')
+          - pz.user != 'root'
+          - pz.server_name is match('^[A-Za-z0-9_-]+$')
+          - pz.service_name is match('^[a-zA-Z0-9_-]+$')
+          - pz.home is match('^/[A-Za-z0-9_-]+/[A-Za-z0-9_/-]+$')
+          - pz.install_dir is match('^/[A-Za-z0-9_-]+/[A-Za-z0-9_/-]+$')
+          - pz.steamcmd_dir is match('^/[A-Za-z0-9_-]+/[A-Za-z0-9_/-]+$')
+          - pz.branch == none or pz.branch is match('^[A-Za-z0-9_-]+$')
+          - pz.heap_initial_mb | int > 0
+          - pz.heap_max_mb | int >= pz.heap_initial_mb | int
+          - pz.settings.DefaultPort | int > 1024
+          - pz.settings.DefaultPort | int <= 65535
+          - pz.settings.UDPPort | int > 1024
+          - pz.settings.UDPPort | int <= 65535
+          - pz.settings.DefaultPort != pz.settings.UDPPort
+          - pz.startup_timeout | int > 0
+          - pz.shutdown_timeout | int > 0
+        fail_msg: Check the failed expression in config.yml. Requires Ubuntu 24.04+ x86_64 and valid names, paths, ports and timeouts.
+
+    - name: Validate available memory
+      ansible.builtin.assert:
+        that:
+          - pz.heap_max_mb | int + 2048 <= ansible_memtotal_mb | int
+        fail_msg: >-
+          Ubuntu detects {{ ansible_memtotal_mb }} MB of RAM. Java is configured
+          for {{ pz.heap_max_mb }} MB and needs 2048 MB of headroom.
+          Lower pz.heap_max_mb to at most {{ (ansible_memtotal_mb | int) - 2048 }}
+          in config.yml, or increase vm.memory_mb and run vagrant reload --provision.
+
+    - name: Check admin password without exposing it
+      ansible.builtin.set_fact:
+        admin_password_valid: >-
+          {{ pz.admin_password is string and
+             pz.admin_password | length >= 12 and
+             pz.admin_password != 'CAMBIAME' and
+             '\n' not in pz.admin_password and '\r' not in pz.admin_password }}
+      no_log: true
+
+    - name: Validate admin password
+      ansible.builtin.assert:
+        that:
+          - admin_password_valid | bool
+        fail_msg: Set pz.admin_password in config.yml to a string of at least 12 characters without line breaks; CAMBIAME is not accepted.
+
+    - name: Prepare optional Workshop mods
+      ansible.builtin.include_tasks: tasks/mods.yml
+
+    - name: Validate INI entries
+      ansible.builtin.assert:
+        that:
+          - item.key is match('^[A-Za-z][A-Za-z0-9]*$')
+          - "'\n' not in (item.value | string)"
+          - "'\r' not in (item.value | string)"
+      loop: "{{ managed_settings | dict2items }}"
+      no_log: true
+
+    - name: Install runtime dependencies
+      ansible.builtin.apt:
+        name: [ca-certificates, lib32gcc-s1, lib32stdc++6, python3, ufw, acl]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create dedicated account without a login password
+      ansible.builtin.user:
+        name: "{{ pz.user }}"
+        home: "{{ pz.home }}"
+        shell: /bin/bash
+        password_lock: true
+        create_home: true
+
+    - name: Create installation and configuration directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ pz.user }}"
+        group: "{{ pz.user }}"
+        mode: '0750'
+      loop:
+        - "{{ pz.install_dir }}"
+        - "{{ pz.steamcmd_dir }}"
+        - "{{ pz.home }}/Zomboid/Server"
+        - "{{ pz.home }}/.config/zomboid"
+
+    - name: Download SteamCMD
+      ansible.builtin.get_url:
+        url: "{{ pz.steamcmd_url }}"
+        dest: "{{ pz.steamcmd_dir }}/steamcmd_linux.tar.gz"
+        owner: "{{ pz.user }}"
+        group: "{{ pz.user }}"
+        mode: '0640'
+
+    - name: Extract SteamCMD as the server user
+      become_user: "{{ pz.user }}"
+      ansible.builtin.unarchive:
+        src: "{{ pz.steamcmd_dir }}/steamcmd_linux.tar.gz"
+        dest: "{{ pz.steamcmd_dir }}"
+        remote_src: true
+        creates: "{{ pz.steamcmd_dir }}/steamcmd.sh"
+
+    - name: Inspect installed server
+      ansible.builtin.stat:
+        path: "{{ pz.install_dir }}/start-server.sh"
+      register: server_script
+
+    - name: Inspect existing services
+      ansible.builtin.service_facts:
+
+    - name: Stop server before an explicit update
+      ansible.builtin.systemd_service:
+        name: "{{ pz.service_name }}"
+        state: stopped
+      when:
+        - pz['update'] | bool
+        - (pz.service_name + '.service') in ansible_facts.services
+
+    - name: Install or explicitly update server as its owner
+      become_user: "{{ pz.user }}"
+      environment:
+        HOME: "{{ pz.home }}"
+      ansible.builtin.command:
+        argv: "{{ [pz.steamcmd_dir + '/steamcmd.sh', '+force_install_dir', pz.install_dir, '+login', 'anonymous', '+app_info_update', '1', '+app_update', '380870'] + (['-beta', pz.branch] if pz.branch else []) + (['validate'] if pz.validate else []) + ['+quit'] }}"
+        chdir: "{{ pz.steamcmd_dir }}"
+      when: not server_script.stat.exists or pz['update'] | bool
+      register: steam_install
+      until: steam_install.rc == 0 and "ERROR!" not in steam_install.stdout
+      retries: 3
+      delay: 10
+      changed_when: true
+      notify: Restart zomboid
+
+    - name: Create initial INI without replacing existing settings
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ pz.home }}/Zomboid/Server/{{ pz.server_name }}.ini"
+        force: false
+        owner: "{{ pz.user }}"
+        group: "{{ pz.user }}"
+        mode: '0600'
+
+    - name: Detect settings changes before editing a running server
+      ansible.builtin.lineinfile:
+        path: "{{ pz.home }}/Zomboid/Server/{{ pz.server_name }}.ini"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ (item.value | ternary('true', 'false')) if item.value is boolean else item.value }}"
+      loop: "{{ managed_settings | dict2items }}"
+      check_mode: true
+      register: settings_preview
+      no_log: true
+
+    - name: Stop existing server before changing its INI
+      ansible.builtin.systemd_service:
+        name: "{{ pz.service_name }}"
+        state: stopped
+      when:
+        - settings_preview.changed
+        - (pz.service_name + '.service') in ansible_facts.services
+
+    - name: Apply configured settings including optional mods
+      ansible.builtin.lineinfile:
+        path: "{{ pz.home }}/Zomboid/Server/{{ pz.server_name }}.ini"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ (item.value | ternary('true', 'false')) if item.value is boolean else item.value }}"
+      loop: "{{ managed_settings | dict2items }}"
+      no_log: true
+      notify: Restart zomboid
+
+    - name: Install server supervisor
+      ansible.builtin.copy:
+        src: run-server.py
+        dest: "{{ pz.home }}/.config/zomboid/run-server.py"
+        owner: "{{ pz.user }}"
+        group: "{{ pz.user }}"
+        mode: '0750'
+      notify: Restart zomboid
+
+    - name: Write private startup settings
+      ansible.builtin.copy:
+        content: "{{ {'install_dir': pz.install_dir, 'server_name': pz.server_name, 'admin_password': pz.admin_password, 'heap_initial_mb': pz.heap_initial_mb, 'heap_max_mb': pz.heap_max_mb, 'ready_file': pz.home + '/.config/zomboid/ready'} | to_nice_json }}\n"
+        dest: "{{ pz.home }}/.config/zomboid/startup.json"
+        owner: "{{ pz.user }}"
+        group: "{{ pz.user }}"
+        mode: '0600'
+      no_log: true
+      notify: Restart zomboid
+
+    - name: Install systemd unit
+      ansible.builtin.template:
+        src: zomboid.service.j2
+        dest: "/etc/systemd/system/{{ pz.service_name }}.service"
+        mode: '0644'
+      register: service_unit
+      notify: Restart zomboid
+
+    - name: Allow SSH before enabling firewall
+      community.general.ufw:
+        rule: allow
+        port: "{{ firewall.ssh_port | string }}"
+        proto: tcp
+      when: firewall.enabled | bool
+
+    - name: Allow configured game ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item | string }}"
+        proto: udp
+      loop: "{{ [pz.settings.DefaultPort, pz.settings.UDPPort] + firewall.extra_udp_ports }}"
+      when: firewall.enabled | bool
+
+    - name: Enable firewall when requested
+      community.general.ufw:
+        state: enabled
+      when: firewall.enabled | bool
+
+    - name: Apply pending service changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure service is running with requested boot policy
+      ansible.builtin.systemd_service:
+        name: "{{ pz.service_name }}"
+        daemon_reload: "{{ service_unit.changed }}"
+        enabled: "{{ pz.enabled }}"
+        state: started
+
+    - name: Wait for the game to report SERVER STARTED
+      ansible.builtin.wait_for:
+        path: "{{ pz.home }}/.config/zomboid/ready"
+        timeout: "{{ pz.startup_timeout }}"
+        msg: "Server did not become ready. Inspect: journalctl -u {{ pz.service_name }} -n 100"
+
+    - name: Verify service survived startup
+      ansible.builtin.command: "systemctl is-active {{ pz.service_name }}"
+      changed_when: false
+
+  handlers:
+    - name: Restart zomboid
+      ansible.builtin.systemd_service:
+        name: "{{ pz.service_name }}"
+        daemon_reload: true
+        state: restarted
